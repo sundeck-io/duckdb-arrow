@@ -8,7 +8,8 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES src/arrow_extension.cpp src/arrow_stream_buffer.cpp
-                      src/arrow_scan_ipc.cpp src/arrow_to_ipc.cpp)
+                      src/arrow_scan_ipc.cpp src/arrow_to_ipc.cpp
+                      src/arrow_ipc_copy.cpp)
 
 if(NOT "${OSX_BUILD_ARCH}" STREQUAL "")
   set(OSX_ARCH_FLAG -DCMAKE_OSX_ARCHITECTURES=${OSX_BUILD_ARCH})

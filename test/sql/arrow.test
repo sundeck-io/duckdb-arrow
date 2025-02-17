@@ -1,13 +1,10 @@
 # name: test/sql/test_arrow.test
-# description: round trip arrow serialization
+# description: round trip arrow serialization and copy function
 # group: [arrow]
-
-# NOTE: for now there's not much we can test here, since we cannot really pass pointers from the
-#       serialized blobs to the scan_arrow_ipc function in SQL. Therefore tests of these features
-#       currently live in the NodeJS client tests.
 
 require arrow
 
+# Test basic Arrow IPC serialization
 statement ok
 SELECT * FROM to_arrow_ipc((SELECT 'Its working!'));
 
@@ -22,3 +19,38 @@ WITH data_union AS (
     SELECT * FROM data
 )
 SELECT * FROM to_arrow_ipc((SELECT * FROM data_union ORDER BY col));
+
+# Test Arrow IPC copy function
+statement ok
+CREATE TABLE test_copy AS SELECT * FROM range(0, 1000000) tbl(i);
+
+# Test basic copy functionality and file naming
+query T
+COPY test_copy TO '__TEST_DIR__/test-*.arrow' (FORMAT arrow_ipc);
+----
+.*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9]+\.arrow
+
+# Verify files are readable
+query I
+SELECT COUNT(*) FROM scan_arrow_ipc('__TEST_DIR__/test-*.arrow');
+----
+1000000
+
+# Test multi-threaded writing and file size limits
+statement ok
+CREATE TABLE test_large AS 
+SELECT i, repeat('x', 1000) as large_text 
+FROM range(0, 10000) tbl(i);
+
+# Test with explicit max file size
+query T
+COPY test_large TO '__TEST_DIR__/large-*.arrow' (FORMAT arrow_ipc, max_file_size 500000);
+----
+.*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9]+\.arrow
+.*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9]+\.arrow
+
+# Verify multi-threaded files are readable
+query I
+SELECT COUNT(*) FROM scan_arrow_ipc('__TEST_DIR__/large-*.arrow');
+----
+10000
