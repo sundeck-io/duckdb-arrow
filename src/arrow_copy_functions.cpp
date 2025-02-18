@@ -33,12 +33,32 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
   auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
   auto global_state = make_uniq<ArrowIPCWriteGlobalState>();
 
-  // Create Arrow schema
-  ArrowSchema schema;
-  auto properties = context.GetClientProperties();
-  ArrowConverter::ToArrowSchema(&schema, arrow_bind.sql_types,
-                                arrow_bind.column_names, properties);
-  global_state->schema = arrow::ImportSchema(&schema).ValueOrDie();
+  // Create Arrow schema directly
+  vector<std::shared_ptr<arrow::Field>> fields;
+  for (idx_t i = 0; i < arrow_bind.sql_types.size(); i++) {
+    auto sql_type = arrow_bind.sql_types[i];
+    auto field_name = arrow_bind.column_names[i];
+
+    // Convert DuckDB type to Arrow type
+    std::shared_ptr<arrow::DataType> arrow_type;
+    switch (sql_type.id()) {
+      case LogicalTypeId::INTEGER:
+        arrow_type = arrow::int32();
+        break;
+      case LogicalTypeId::BIGINT:
+        arrow_type = arrow::int64();
+        break;
+      // Add more type conversions as needed
+      default:
+        throw IOException("Unsupported type for Arrow IPC: " +
+                        sql_type.ToString());
+    }
+
+    fields.push_back(arrow::field(field_name, arrow_type));
+  }
+
+  // Create final schema
+  global_state->schema = std::make_shared<arrow::Schema>(fields);
 
   // Create Arrow file writer
   auto &fs = FileSystem::GetFileSystem(context);
@@ -89,6 +109,7 @@ void ArrowIPCWriteSink(ExecutionContext &context, FunctionData &bind_data,
   auto &local_state = lstate.Cast<ArrowIPCWriteLocalState>();
 
   if (!local_state.appender) {
+    // Create appender with column types directly
     local_state.appender =
         make_uniq<ArrowAppender>(arrow_bind.sql_types, arrow_bind.chunk_size,
                                  context.client.GetClientProperties(),
@@ -96,7 +117,7 @@ void ArrowIPCWriteSink(ExecutionContext &context, FunctionData &bind_data,
                                      context.client, arrow_bind.sql_types));
   }
 
-  // Append input chunk
+  // Append input chunk directly
   local_state.appender->Append(input, 0, input.size(), input.size());
   local_state.current_count += input.size();
 
@@ -104,15 +125,20 @@ void ArrowIPCWriteSink(ExecutionContext &context, FunctionData &bind_data,
   if (local_state.current_count >= arrow_bind.chunk_size) {
     // Create record batch and write
     ArrowArray arr = local_state.appender->Finalize();
-    auto record_batch =
-        arrow::ImportRecordBatch(&arr, global_state.schema).ValueOrDie();
-    auto status = global_state.writer.get()->WriteRecordBatch(*record_batch);
+    auto record_batch_result =
+        arrow::ImportRecordBatch(&arr, global_state.schema);
+    if (!record_batch_result.ok()) {
+      throw IOException("Failed to import Arrow record batch: " +
+                        record_batch_result.status().ToString());
+    }
+    auto record_batch = record_batch_result.ValueOrDie();
+    auto status = global_state.writer->WriteRecordBatch(*record_batch);
     if (!status.ok()) {
       throw IOException("Failed to write Arrow IPC record batch: " +
                         status.ToString());
     }
 
-    // Reset local state
+    // Reset local state and ensure proper cleanup
     local_state.appender.reset();
     local_state.current_count = 0;
   }
@@ -300,16 +326,16 @@ ArrowIPCWritePrepareBatch(ClientContext &context, FunctionData &bind_data,
                           unique_ptr<ColumnDataCollection> input_collection) {
   auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
   auto result = make_uniq<ArrowIPCWriteBatchData>();
-  
+
   // Store the collection
   result->collection = std::move(input_collection);
-  
-  // Create appender
+
+  // Create appender with column types directly
   result->appender = make_uniq<ArrowAppender>(
       arrow_bind.sql_types, arrow_bind.chunk_size,
       context.GetClientProperties(),
       ArrowTypeExtensionData::GetExtensionTypes(context, arrow_bind.sql_types));
-  
+
   return std::move(result);
 }
 
@@ -319,16 +345,22 @@ void ArrowIPCWriteFlushBatch(ClientContext &context, FunctionData &bind_data,
   auto &global_state = gstate.Cast<ArrowIPCWriteGlobalState>();
   auto &batch = batch_p.Cast<ArrowIPCWriteBatchData>();
 
-  // Append all chunks to the appender
+  // Process each chunk in the collection
   for (auto &chunk : batch.collection->Chunks()) {
+    // Append chunk directly
     batch.appender->Append(chunk, 0, chunk.size(), chunk.size());
   }
 
   // Create record batch and write
   ArrowArray arr = batch.appender->Finalize();
-  auto record_batch =
-      arrow::ImportRecordBatch(&arr, global_state.schema).ValueOrDie();
-  auto status = global_state.writer.get()->WriteRecordBatch(*record_batch);
+  auto record_batch_result =
+      arrow::ImportRecordBatch(&arr, global_state.schema);
+  if (!record_batch_result.ok()) {
+    throw IOException("Failed to import Arrow record batch: " +
+                      record_batch_result.status().ToString());
+  }
+  auto record_batch = record_batch_result.ValueOrDie();
+  auto status = global_state.writer->WriteRecordBatch(*record_batch);
   if (!status.ok()) {
     throw IOException("Failed to write Arrow IPC record batch: " +
                       status.ToString());
