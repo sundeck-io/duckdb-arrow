@@ -294,4 +294,42 @@ ArrowIPCCopyFromFunction(ClientContext &context, vector<string> &names,
   return std::move(result);
 }
 
+void ArrowIPCWritePrepareBatch(ClientContext &context, FunctionData &bind_data,
+                               GlobalFunctionData &gstate,
+                               LocalFunctionData &lstate) {
+  auto &local_state = lstate.Cast<ArrowIPCWriteLocalState>();
+  auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
+
+  // Create new appender if needed
+  if (!local_state.appender) {
+    local_state.appender =
+        make_uniq<ArrowAppender>(arrow_bind.sql_types, arrow_bind.chunk_size,
+                                 context.GetClientProperties(),
+                                 ArrowTypeExtensionData::GetExtensionTypes(
+                                     context, arrow_bind.sql_types));
+  }
+}
+
+void ArrowIPCWriteFlushBatch(ClientContext &context, FunctionData &bind_data,
+                             GlobalFunctionData &gstate,
+                             PreparedBatchData &batch_p) {
+  auto &global_state = gstate.Cast<ArrowIPCWriteGlobalState>();
+  auto &batch = batch_p.Cast<ArrowIPCWriteBatchData>();
+
+  // Append all chunks to the appender
+  for (auto &chunk : batch.collection->Chunks()) {
+    batch.appender->Append(chunk, 0, chunk.size(), chunk.size());
+  }
+
+  // Create record batch and write
+  ArrowArray arr = batch.appender->Finalize();
+  auto record_batch =
+      arrow::ImportRecordBatch(&arr, global_state.schema).ValueOrDie();
+  auto status = global_state.writer.get()->WriteRecordBatch(*record_batch);
+  if (!status.ok()) {
+    throw IOException("Failed to write Arrow IPC record batch: " +
+                      status.ToString());
+  }
+}
+
 } // namespace duckdb

@@ -86,8 +86,24 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
                      vector<string> &names,
                      vector<LogicalType> &expected_types);
 
+struct ArrowIPCWriteBatchData : public PreparedBatchData {
+  //! The prepared data chunk collection
+  unique_ptr<ColumnDataCollection> collection;
+  //! The Arrow appender for creating record batches
+  unique_ptr<ArrowAppender> appender;
+};
+
 unique_ptr<FunctionData>
 ArrowIPCCopyFromFunction(ClientContext &context, vector<string> &names,
                          vector<LogicalType> &expected_types);
+
+unique_ptr<PreparedBatchData>
+ArrowIPCWritePrepareBatch(ClientContext &context, FunctionData &bind_data,
+                          GlobalFunctionData &gstate,
+                          unique_ptr<ColumnDataCollection> input_collection);
+
+void ArrowIPCWriteFlushBatch(ClientContext &context, FunctionData &bind_data,
+                             GlobalFunctionData &gstate,
+                             PreparedBatchData &batch_p);
 
 } // namespace duckdb

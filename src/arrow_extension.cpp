@@ -35,8 +35,8 @@ static void LoadInternal(DatabaseInstance &instance) {
   arrow_copy_function.execution_mode = ArrowIPCWriteExecutionMode;
   arrow_copy_function.serialize = ArrowIPCCopySerialize;
   arrow_copy_function.deserialize = ArrowIPCCopyDeserialize;
-  arrow_copy_function.prepare_batch = nullptr;
-  arrow_copy_function.flush_batch = nullptr;
+  arrow_copy_function.prepare_batch = ArrowIPCWritePrepareBatch;
+  arrow_copy_function.flush_batch = ArrowIPCWriteFlushBatch;
   arrow_copy_function.extension = "arrow";
   arrow_copy_function.copy_from_bind = ArrowIPCCopyFromBind;
   arrow_copy_function.copy_from_function = ArrowIPCTableFunction::GetFunction();
