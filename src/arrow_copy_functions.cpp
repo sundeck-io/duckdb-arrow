@@ -294,20 +294,23 @@ ArrowIPCCopyFromFunction(ClientContext &context, vector<string> &names,
   return std::move(result);
 }
 
-void ArrowIPCWritePrepareBatch(ClientContext &context, FunctionData &bind_data,
-                               GlobalFunctionData &gstate,
-                               LocalFunctionData &lstate) {
-  auto &local_state = lstate.Cast<ArrowIPCWriteLocalState>();
+unique_ptr<PreparedBatchData>
+ArrowIPCWritePrepareBatch(ClientContext &context, FunctionData &bind_data,
+                          GlobalFunctionData &gstate,
+                          unique_ptr<ColumnDataCollection> input_collection) {
   auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
-
-  // Create new appender if needed
-  if (!local_state.appender) {
-    local_state.appender =
-        make_uniq<ArrowAppender>(arrow_bind.sql_types, arrow_bind.chunk_size,
-                                 context.GetClientProperties(),
-                                 ArrowTypeExtensionData::GetExtensionTypes(
-                                     context, arrow_bind.sql_types));
-  }
+  auto result = make_uniq<ArrowIPCWriteBatchData>();
+  
+  // Store the collection
+  result->collection = std::move(input_collection);
+  
+  // Create appender
+  result->appender = make_uniq<ArrowAppender>(
+      arrow_bind.sql_types, arrow_bind.chunk_size,
+      context.GetClientProperties(),
+      ArrowTypeExtensionData::GetExtensionTypes(context, arrow_bind.sql_types));
+  
+  return std::move(result);
 }
 
 void ArrowIPCWriteFlushBatch(ClientContext &context, FunctionData &bind_data,
