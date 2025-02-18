@@ -1,0 +1,16 @@
+# name: test/sql/arrow_ipc/write_arrow_ipc.test
+# description: Test Arrow IPC copy functionality
+# group: [arrow_ipc]
+
+require arrow
+
+statement ok
+CREATE TABLE test_data AS SELECT * FROM range(0, 1000) tbl(i);
+
+statement ok
+COPY test_data TO '__TEST_DIR__/test.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM '__TEST_DIR__/test.arrow';
+----
+1000

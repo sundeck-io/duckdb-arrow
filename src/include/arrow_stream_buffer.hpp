@@ -40,6 +40,13 @@ protected:
 public:
   /// Constructor
   ArrowIPCStreamBuffer();
+  /// Destructor
+  ~ArrowIPCStreamBuffer() override {
+    batches_.clear();
+    if (schema_) {
+      schema_.reset();
+    }
+  }
 
   /// Is end of stream?
   bool is_eos() const { return is_eos_; }
@@ -51,7 +58,8 @@ public:
   }
 };
 
-struct ArrowIPCStreamBufferReader : public arrow::RecordBatchReader {
+struct ArrowIPCStreamBufferReader : public arrow::RecordBatchReader,
+                                    public DependencyItem {
 protected:
   /// The buffer
   std::shared_ptr<ArrowIPCStreamBuffer> buffer_;
@@ -61,8 +69,18 @@ protected:
 public:
   /// Constructor
   ArrowIPCStreamBufferReader(std::shared_ptr<ArrowIPCStreamBuffer> buffer);
+
+  /// Get the buffer
+  std::shared_ptr<ArrowIPCStreamBuffer> &get_buffer() { return buffer_; }
   /// Destructor
-  ~ArrowIPCStreamBufferReader() = default;
+  ~ArrowIPCStreamBufferReader() override {
+    // Clear batches first
+    if (buffer_) {
+      buffer_->batches().clear();
+      // Let schema cleanup happen through ArrowSchemaWrapper
+      buffer_.reset();
+    }
+  }
 
   /// Get the schema
   std::shared_ptr<arrow::Schema> schema() const override;

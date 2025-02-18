@@ -4,8 +4,10 @@
 #include "arrow_stream_buffer.hpp"
 #include "arrow_scan_ipc.hpp"
 #include "arrow_to_ipc.hpp"
+#include "arrow_copy_functions.hpp"
 
 #include "duckdb.hpp"
+#include "duckdb/function/copy_function.hpp"
 #ifndef DUCKDB_AMALGAMATION
 #include "duckdb/common/arrow/result_arrow_wrapper.hpp"
 #include "duckdb/common/arrow/arrow_appender.hpp"
@@ -21,6 +23,11 @@ static void LoadInternal(DatabaseInstance &instance) {
   ExtensionUtil::RegisterFunction(instance, ToArrowIPCFunction::GetFunction());
   ExtensionUtil::RegisterFunction(instance,
                                   ArrowIPCTableFunction::GetFunction());
+
+  CopyFunction function("arrow");
+  function.copy_to_select = ArrowIPCWriteSelect;
+  function.extension = "arrow";
+  ExtensionUtil::RegisterFunction(instance, function);
 }
 
 void ArrowExtension::Load(DuckDB &db) { LoadInternal(*db.instance); }
