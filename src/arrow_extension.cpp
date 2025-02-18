@@ -24,10 +24,23 @@ static void LoadInternal(DatabaseInstance &instance) {
   ExtensionUtil::RegisterFunction(instance,
                                   ArrowIPCTableFunction::GetFunction());
 
-  CopyFunction function("arrow");
-  function.copy_to_select = ArrowIPCWriteSelect;
-  function.extension = "arrow";
-  ExtensionUtil::RegisterFunction(instance, function);
+  CopyFunction arrow_copy_function("arrow");
+  arrow_copy_function.copy_to_select = ArrowIPCWriteSelect;
+  arrow_copy_function.copy_to_bind = ArrowIPCWriteBind;
+  arrow_copy_function.copy_to_initialize_global = ArrowIPCWriteInitializeGlobal;
+  arrow_copy_function.copy_to_initialize_local = ArrowIPCWriteInitializeLocal;
+  arrow_copy_function.copy_to_sink = ArrowIPCWriteSink;
+  arrow_copy_function.copy_to_combine = ArrowIPCWriteCombine;
+  arrow_copy_function.copy_to_finalize = ArrowIPCWriteFinalize;
+  arrow_copy_function.execution_mode = ArrowIPCWriteExecutionMode;
+  arrow_copy_function.serialize = ArrowIPCCopySerialize;
+  arrow_copy_function.deserialize = ArrowIPCCopyDeserialize;
+  arrow_copy_function.prepare_batch = nullptr;
+  arrow_copy_function.flush_batch = nullptr;
+  arrow_copy_function.extension = "arrow";
+  arrow_copy_function.copy_from_bind = ArrowIPCCopyFromBind;
+  arrow_copy_function.copy_from_function = ArrowIPCTableFunction::GetFunction();
+  ExtensionUtil::RegisterFunction(instance, arrow_copy_function);
 }
 
 void ArrowExtension::Load(DuckDB &db) { LoadInternal(*db.instance); }
