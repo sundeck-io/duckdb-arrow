@@ -243,49 +243,27 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
     throw IOException("Invalid Arrow IPC file");
   }
 
+  if (!stream_decoder->buffer()->is_eos()) {
+    throw IOException("Arrow IPC file is incomplete");
+  }
+
   // Get stream factory pointer and functions
+  auto stream_factory_ptr = (uintptr_t)&stream_decoder->buffer();
   auto stream_factory_produce =
       (stream_factory_produce_t)&ArrowIPCStreamBufferReader::CreateStream;
   auto stream_factory_get_schema =
       (stream_factory_get_schema_t)&ArrowIPCStreamBufferReader::GetSchema;
 
   // Store decoder and get buffer pointer
-  auto result = make_uniq<ArrowIPCScanFunctionData>(stream_factory_produce, 0);
+  auto result = make_uniq<ArrowIPCScanFunctionData>(stream_factory_produce, stream_factory_ptr);
   result->stream_decoder = std::move(stream_decoder);
 
-  // Store buffer pointer - keep the shared_ptr alive
-  auto ipc_buffer = result->stream_decoder->buffer();
-  // Create reader and store it in a shared_ptr to keep it alive
-  auto reader = duckdb::make_shared_ptr<ArrowIPCStreamBufferReader>(ipc_buffer);
-  auto *reader_raw = reader.get();
-  result->stream_factory_ptr = (uintptr_t)reader_raw;
-
-  // Store reader in the dependency field to keep it alive and manage its
-  // lifecycle
-  result->dependency = std::move(reader);
-
-  // Set up schema using the buffer pointer
-  stream_factory_get_schema((ArrowArrayStream *)result->stream_factory_ptr,
-                            result->schema_root.arrow_schema);
-
-  // Ensure schema is properly initialized
-  if (!result->schema_root.arrow_schema.release) {
-    throw IOException("Failed to initialize Arrow schema");
-  }
-
-  // Let ArrowSchemaWrapper handle schema cleanup
-  // Do not modify release callbacks - they will be handled by the wrapper
-  for (idx_t i = 0; i < result->schema_root.arrow_schema.n_children; i++) {
-    if (!result->schema_root.arrow_schema.children[i]->release) {
-      throw InvalidInputException("arrow_scan: released schema passed");
-    }
-  }
-
-  // Set up column info
+  auto &data = *result;
+  stream_factory_get_schema((ArrowArrayStream *)stream_factory_ptr,
+                            data.schema_root.arrow_schema);
   for (idx_t col_idx = 0;
-       col_idx < (idx_t)result->schema_root.arrow_schema.n_children;
-       col_idx++) {
-    auto &schema = *result->schema_root.arrow_schema.children[col_idx];
+       col_idx < (idx_t)data.schema_root.arrow_schema.n_children; col_idx++) {
+    auto &schema = *data.schema_root.arrow_schema.children[col_idx];
     if (!schema.release) {
       throw InvalidInputException("arrow_scan: released schema passed");
     }
@@ -301,6 +279,7 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
       expected_types.emplace_back(arrow_type->GetDuckType());
     }
     result->arrow_table.AddColumn(col_idx, std::move(arrow_type));
+    auto format = string(schema.format);
     auto name = string(schema.name);
     if (name.empty()) {
       name = string("v") + to_string(col_idx);
@@ -308,7 +287,6 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
     names.push_back(name);
   }
   QueryResult::DeduplicateColumns(names);
-
   return std::move(result);
 }
 

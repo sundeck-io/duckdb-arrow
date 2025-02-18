@@ -70,8 +70,6 @@ public:
   /// Constructor
   ArrowIPCStreamBufferReader(std::shared_ptr<ArrowIPCStreamBuffer> buffer);
 
-  /// Get the buffer
-  std::shared_ptr<ArrowIPCStreamBuffer> &get_buffer() { return buffer_; }
   /// Destructor
   ~ArrowIPCStreamBufferReader() override {
     // Clear batches first
