@@ -87,11 +87,11 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
 
 vector<unique_ptr<Expression>> ArrowIPCWriteSelect(CopyToSelectInput &input) {
   vector<unique_ptr<Expression>> result;
-  bool any_change = false;
+  // bool any_change = false;
 
   for (auto &expr : input.select_list) {
-    const auto &type = expr->return_type;
-    const auto &name = expr->GetAlias();
+    // const auto &type = expr->return_type;
+    // const auto &name = expr->GetAlias();
 
     // All types supported by Arrow IPC
     result.push_back(std::move(expr));
@@ -147,7 +147,7 @@ void ArrowIPCWriteSink(ExecutionContext &context, FunctionData &bind_data,
 void ArrowIPCWriteCombine(ExecutionContext &context, FunctionData &bind_data,
                           GlobalFunctionData &gstate,
                           LocalFunctionData &lstate) {
-  auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
+  // auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
   auto &global_state = gstate.Cast<ArrowIPCWriteGlobalState>();
   auto &local_state = lstate.Cast<ArrowIPCWriteLocalState>();
 
@@ -226,19 +226,29 @@ unique_ptr<FunctionData> ArrowIPCCopyDeserialize(Deserializer &deserializer,
 
 unique_ptr<FunctionData>
 ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
-                     vector<string> &names,
+                     vector<string> &expected_names,
                      vector<LogicalType> &expected_types) {
   auto &fs = FileSystem::GetFileSystem(context);
   auto handle = fs.OpenFile(info.file_path, FileFlags::FILE_FLAGS_READ);
   auto file_size = fs.GetFileSize(*handle);
 
   // Read file into memory
-  vector<uint8_t> file_buffer(file_size);
-  handle->Read(file_buffer.data(), file_size);
+  auto s_file_buffer = make_shared_ptr<vector<uint8_t>>(file_size);
+  auto file_buffer = s_file_buffer.get();
+  auto bytes_read = handle->Read(file_buffer->data(), file_size);
+
+  if (bytes_read != file_size) {
+    throw IOException("Failed to read Arrow IPC file");
+  }
 
   // Create stream decoder and buffer
   auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
-  auto consume_result = stream_decoder->Consume(file_buffer.data(), file_size);
+  if (std::string(reinterpret_cast<char*>(file_buffer->data()), 6) == ARROW_MAGIC) {
+    // Remove magic and footer
+    file_buffer->erase(file_buffer->begin(), file_buffer->begin() + 8);
+    file_buffer->erase(file_buffer->end() - 8, file_buffer->end());
+  }
+  auto consume_result = stream_decoder->Consume(file_buffer->data(), file_buffer->size());
   if (!consume_result.ok()) {
     throw IOException("Invalid Arrow IPC file");
   }
@@ -251,16 +261,17 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
   auto stream_factory_ptr = (uintptr_t)&stream_decoder->buffer();
   auto stream_factory_produce =
       (stream_factory_produce_t)&ArrowIPCStreamBufferReader::CreateStream;
-  auto stream_factory_get_schema =
-      (stream_factory_get_schema_t)&ArrowIPCStreamBufferReader::GetSchema;
 
   // Store decoder and get buffer pointer
   auto result = make_uniq<ArrowIPCScanFunctionData>(stream_factory_produce, stream_factory_ptr);
   result->stream_decoder = std::move(stream_decoder);
+  result->file_buffer = s_file_buffer;
 
   auto &data = *result;
-  stream_factory_get_schema((ArrowArrayStream *)stream_factory_ptr,
-                            data.schema_root.arrow_schema);
+  ArrowIPCStreamBufferReader::GetSchema((uintptr_t)&result->stream_decoder->buffer(),
+                            data.schema_root);
+  vector<string> names;
+  vector<LogicalType> types;
   for (idx_t col_idx = 0;
        col_idx < (idx_t)data.schema_root.arrow_schema.n_children; col_idx++) {
     auto &schema = *data.schema_root.arrow_schema.children[col_idx];
@@ -273,10 +284,10 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
     if (schema.dictionary) {
       auto dictionary_type = ArrowType::GetArrowLogicalType(
           DBConfig::GetConfig(context), *schema.dictionary);
-      expected_types.emplace_back(dictionary_type->GetDuckType());
+      types.emplace_back(dictionary_type->GetDuckType());
       arrow_type->SetDictionary(std::move(dictionary_type));
     } else {
-      expected_types.emplace_back(arrow_type->GetDuckType());
+      types.emplace_back(arrow_type->GetDuckType());
     }
     result->arrow_table.AddColumn(col_idx, std::move(arrow_type));
     auto format = string(schema.format);
@@ -287,6 +298,18 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
     names.push_back(name);
   }
   QueryResult::DeduplicateColumns(names);
+  if (expected_types.empty()) {
+    expected_names = names;
+    expected_types = types;
+  } else {
+    if (expected_names != names) {
+      throw IOException("Arrow IPC schema mismatch, column names mismatch");
+    }
+    if (expected_types != types) {
+      // TODO add more detailed error message
+      throw IOException("Arrow IPC schema mismatch, column types mismatch");
+    }
+  }
   return std::move(result);
 }
 

@@ -11,7 +11,7 @@ statement ok
 COPY test_data TO '__TEST_DIR__/test.arrow' (FORMAT 'arrow');
 
 statement ok
-CREATE TABLE test_verify(i INTEGER);
+CREATE TABLE test_verify(i BIGINT);
 
 statement ok
 COPY test_verify FROM '__TEST_DIR__/test.arrow' (FORMAT 'arrow');

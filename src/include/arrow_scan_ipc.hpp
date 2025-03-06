@@ -7,10 +7,13 @@
 
 namespace duckdb {
 
+const std::string ARROW_MAGIC = "ARROW1";
+
 struct ArrowIPCScanFunctionData : public ArrowScanFunctionData {
 public:
   using ArrowScanFunctionData::ArrowScanFunctionData;
   unique_ptr<BufferingArrowIPCStreamDecoder> stream_decoder = nullptr;
+  shared_ptr<vector<uint8_t>> file_buffer;
 };
 
 // IPC Table scan is identical to ArrowTableFunction arrow scan except instead
