@@ -20,3 +20,25 @@ query I
 SELECT COUNT(*) FROM test_verify;
 ----
 1000
+
+statement ok
+CREATE TABLE all_types (id INTEGER, name TEXT, amount DOUBLE, is_active BOOLEAN, create_date DATE, created_at TIMESTAMP, big_number BIGINT, ratio DECIMAL(10,2), binary_data BLOB);
+
+statement ok
+INSERT INTO all_types VALUES
+(1, 'Alice', 99.99, TRUE, '2024-02-01', '2024-02-01 12:00:00', 123456789012345, 3.14, X'68656C6C6F'),
+(2, 'Bob', 250.75, FALSE, '2023-12-15', '2023-12-15 08:30:00', 987654321098765, 1.23, X'74657374');
+
+statement ok
+COPY all_types TO '__TEST_DIR__/all_types.arrow' (FORMAT 'arrow');
+
+statement ok
+CREATE TABLE all_types_verify (id INTEGER, name TEXT, amount DOUBLE, is_active BOOLEAN, create_date DATE, created_at TIMESTAMP, big_number BIGINT, ratio DECIMAL(10,2), binary_data BLOB);
+
+statement ok
+COPY all_types_verify FROM '__TEST_DIR__/all_types.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM all_types_verify;
+----
+2

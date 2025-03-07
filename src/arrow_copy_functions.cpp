@@ -1,12 +1,11 @@
 #include "arrow_copy_functions.hpp"
-#include "arrow_to_ipc.hpp"
-#include "duckdb/common/types/value.hpp"
-#include "duckdb/main/config.hpp"
-#include "duckdb/common/file_system.hpp"
-#include "duckdb/function/table/arrow.hpp"
 #include "arrow/c/bridge.h"
 #include "arrow/io/file.h"
 #include "arrow/ipc/writer.h"
+#include "arrow_to_ipc.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/function/table/arrow.hpp"
+#include "duckdb/main/config.hpp"
 
 namespace duckdb {
 
@@ -47,6 +46,37 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
         break;
       case LogicalTypeId::BIGINT:
         arrow_type = arrow::int64();
+        break;
+      case LogicalTypeId::VARCHAR:
+        arrow_type = arrow::utf8();
+        break;
+      case LogicalTypeId::DOUBLE:
+        arrow_type = arrow::float64();
+        break;
+      case LogicalTypeId::BOOLEAN:
+        arrow_type = arrow::boolean();
+        break;
+      case LogicalTypeId::DATE:
+        arrow_type = arrow::date32();
+        break;
+      case LogicalTypeId::TIMESTAMP_SEC:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::SECOND);
+        break;
+      case LogicalTypeId::TIMESTAMP_MS:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::MILLI);
+        break;
+      case LogicalTypeId::TIMESTAMP:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::MICRO);
+        break;
+      case LogicalTypeId::TIMESTAMP_NS:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::NANO);
+        break;
+      case LogicalTypeId::BLOB:
+        arrow_type = arrow::binary();
+        break;
+      case LogicalTypeId::DECIMAL:
+        arrow_type = arrow::decimal(DecimalType::GetWidth(sql_type),
+                                    DecimalType::GetScale(sql_type));
         break;
       // Add more type conversions as needed
       default:
