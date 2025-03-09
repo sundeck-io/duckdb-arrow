@@ -116,17 +116,8 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
 }
 
 vector<unique_ptr<Expression>> ArrowIPCWriteSelect(CopyToSelectInput &input) {
-  vector<unique_ptr<Expression>> result;
-  // bool any_change = false;
-
-  for (auto &expr : input.select_list) {
-    // const auto &type = expr->return_type;
-    // const auto &name = expr->GetAlias();
-
-    // All types supported by Arrow IPC
-    result.push_back(std::move(expr));
-  }
-  // If no changes were made, return empty vector to avoid unnecessary
+  // All types supported by Arrow IPC
+  // As no changes were made, return empty vector to avoid unnecessary
   // projection
   return {};
 }
@@ -177,7 +168,6 @@ void ArrowIPCWriteSink(ExecutionContext &context, FunctionData &bind_data,
 void ArrowIPCWriteCombine(ExecutionContext &context, FunctionData &bind_data,
                           GlobalFunctionData &gstate,
                           LocalFunctionData &lstate) {
-  // auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
   auto &global_state = gstate.Cast<ArrowIPCWriteGlobalState>();
   auto &local_state = lstate.Cast<ArrowIPCWriteLocalState>();
 
@@ -271,14 +261,16 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
     throw IOException("Failed to read Arrow IPC file");
   }
 
+  auto buffer = file_buffer->data();
+  auto buffer_size = file_buffer->size();
   // Create stream decoder and buffer
-  auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
   if (std::string(reinterpret_cast<char*>(file_buffer->data()), 6) == ARROW_MAGIC) {
-    // Remove magic and footer
-    file_buffer->erase(file_buffer->begin(), file_buffer->begin() + 8);
-    file_buffer->erase(file_buffer->end() - 8, file_buffer->end());
+    // ignore magic and footer if it is arrow file format
+    buffer = file_buffer->data() + 8;  // skip 8byte magic at the start
+    buffer_size -= 16;  // skip 8byte magic and 8byte footer
   }
-  auto consume_result = stream_decoder->Consume(file_buffer->data(), file_buffer->size());
+  auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
+  auto consume_result = stream_decoder->Consume(buffer, buffer_size);
   if (!consume_result.ok()) {
     throw IOException("Invalid Arrow IPC file");
   }

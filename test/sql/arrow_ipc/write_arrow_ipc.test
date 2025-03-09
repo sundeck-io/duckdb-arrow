@@ -10,6 +10,11 @@ CREATE TABLE test_data AS SELECT * FROM range(0, 1000) tbl(i);
 statement ok
 COPY test_data TO '__TEST_DIR__/test.arrow' (FORMAT 'arrow');
 
+query I
+SELECT COUNT(*) FROM arrow('__TEST_DIR__/test.arrow');
+----
+1000
+
 statement ok
 CREATE TABLE test_verify(i BIGINT);
 
@@ -31,6 +36,11 @@ INSERT INTO all_types VALUES
 
 statement ok
 COPY all_types TO '__TEST_DIR__/all_types.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM arrow('__TEST_DIR__/all_types.arrow');
+----
+2
 
 statement ok
 CREATE TABLE all_types_verify (id INTEGER, name TEXT, amount DOUBLE, is_active BOOLEAN, create_date DATE, created_at TIMESTAMP, big_number BIGINT, ratio DECIMAL(10,2), binary_data BLOB);
