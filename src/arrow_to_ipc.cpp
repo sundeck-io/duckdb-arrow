@@ -116,7 +116,8 @@ OperatorResultType ToArrowIPCFunction::Function(ExecutionContext &context,
     output.data[1].SetValue(0, Value::BOOLEAN(1));
   } else {
     if (!local_state.appender) {
-      local_state.appender = make_uniq<ArrowAppender>(input.GetTypes(), data.chunk_size,
+      local_state.appender =
+          make_uniq<ArrowAppender>(input.GetTypes(), data.chunk_size,
                                    context.client.GetClientProperties(),
                                    ArrowTypeExtensionData::GetExtensionTypes(
                                        context.client, input.GetTypes()));

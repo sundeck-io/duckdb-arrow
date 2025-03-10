@@ -1,0 +1,54 @@
+# name: test/sql/arrow_ipc/write_arrow_ipc.test
+# description: Test Arrow IPC copy functionality
+# group: [arrow_ipc]
+
+require arrow
+
+statement ok
+CREATE TABLE test_data AS SELECT * FROM range(0, 1000) tbl(i);
+
+statement ok
+COPY test_data TO '__TEST_DIR__/test.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM arrow('__TEST_DIR__/test.arrow');
+----
+1000
+
+statement ok
+CREATE TABLE test_verify(i BIGINT);
+
+statement ok
+COPY test_verify FROM '__TEST_DIR__/test.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM test_verify;
+----
+1000
+
+statement ok
+CREATE TABLE all_types (id INTEGER, name TEXT, amount DOUBLE, is_active BOOLEAN, create_date DATE, created_at TIMESTAMP, big_number BIGINT, ratio DECIMAL(10,2), binary_data BLOB);
+
+statement ok
+INSERT INTO all_types VALUES
+(1, 'Alice', 99.99, TRUE, '2024-02-01', '2024-02-01 12:00:00', 123456789012345, 3.14, X'68656C6C6F'),
+(2, 'Bob', 250.75, FALSE, '2023-12-15', '2023-12-15 08:30:00', 987654321098765, 1.23, X'74657374');
+
+statement ok
+COPY all_types TO '__TEST_DIR__/all_types.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM arrow('__TEST_DIR__/all_types.arrow');
+----
+2
+
+statement ok
+CREATE TABLE all_types_verify (id INTEGER, name TEXT, amount DOUBLE, is_active BOOLEAN, create_date DATE, created_at TIMESTAMP, big_number BIGINT, ratio DECIMAL(10,2), binary_data BLOB);
+
+statement ok
+COPY all_types_verify FROM '__TEST_DIR__/all_types.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM all_types_verify;
+----
+2

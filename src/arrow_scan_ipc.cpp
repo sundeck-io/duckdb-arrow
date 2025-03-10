@@ -6,17 +6,17 @@ TableFunction ArrowIPCTableFunction::GetFunction() {
   child_list_t<LogicalType> make_buffer_struct_children{
       {"ptr", LogicalType::UBIGINT}, {"size", LogicalType::UBIGINT}};
 
-  TableFunction scan_arrow_ipc_func(
-      "scan_arrow_ipc",
-      {LogicalType::LIST(LogicalType::STRUCT(make_buffer_struct_children))},
-      ArrowIPCTableFunction::ArrowScanFunction,
-      ArrowIPCTableFunction::ArrowScanBind,
-      ArrowTableFunction::ArrowScanInitGlobal,
-      ArrowTableFunction::ArrowScanInitLocal);
+  TableFunction scan_arrow_ipc_func("arrow", {LogicalType::VARCHAR},
+                                    ArrowIPCTableFunction::ArrowScanFunction,
+                                    ArrowIPCTableFunction::ArrowScanBind,
+                                    ArrowTableFunction::ArrowScanInitGlobal,
+                                    ArrowTableFunction::ArrowScanInitLocal);
 
   scan_arrow_ipc_func.cardinality = ArrowTableFunction::ArrowScanCardinality;
   scan_arrow_ipc_func.projection_pushdown = true;
   scan_arrow_ipc_func.filter_pushdown = false;
+  scan_arrow_ipc_func.named_parameters["format"] = LogicalType::VARCHAR;
+  scan_arrow_ipc_func.named_parameters["compression"] = LogicalType::VARCHAR;
 
   return scan_arrow_ipc_func;
 }
@@ -24,26 +24,34 @@ TableFunction ArrowIPCTableFunction::GetFunction() {
 unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
     ClientContext &context, TableFunctionBindInput &input,
     vector<LogicalType> &return_types, vector<string> &names) {
+
+  // Get file path from input
+  auto file_path = input.inputs[0].GetValue<string>();
+  auto &fs = FileSystem::GetFileSystem(context);
+  auto handle = fs.OpenFile(file_path, FileFlags::FILE_FLAGS_READ);
+
+  // Read file into memory
+  auto file_size = fs.GetFileSize(*handle);
+  auto s_file_buffer = make_shared_ptr<vector<uint8_t>>(file_size);
+  auto file_buffer = s_file_buffer.get();
+  auto bytes_read = handle->Read(file_buffer->data(), file_size);
+
+  if (bytes_read != file_size) {
+    throw IOException("Failed to read Arrow IPC file");
+  }
+
+  // Create stream decoder and buffer
+  auto buffer = file_buffer->data();
+  auto buffer_size = file_buffer->size();
+  // Feed file into decoder
   auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
-
-  // Decode buffer ptr list
-  auto buffer_ptr_list = ListValue::GetChildren(input.inputs[0]);
-  for (auto &buffer_ptr_struct : buffer_ptr_list) {
-    auto unpacked = StructValue::GetChildren(buffer_ptr_struct);
-    uint64_t ptr = unpacked[0].GetValue<uint64_t>();
-    uint64_t size = unpacked[1].GetValue<uint64_t>();
-
-    // Feed stream into decoder
-    auto res = stream_decoder->Consume((const uint8_t *)ptr, size);
-
-    if (!res.ok()) {
-      throw IOException("Invalid IPC stream");
-    }
+  auto consume_result = stream_decoder->Consume(buffer, buffer_size);
+  if (!consume_result.ok()) {
+    throw IOException("Invalid Arrow IPC file");
   }
 
   if (!stream_decoder->buffer()->is_eos()) {
-    throw IOException(
-        "IPC buffers passed to arrow scan should contain entire stream");
+    throw IOException("Arrow IPC file is incomplete");
   }
 
   // These are the params I need to produce from the ipc buffers using the
@@ -53,15 +61,15 @@ unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
       (stream_factory_produce_t)&ArrowIPCStreamBufferReader::CreateStream;
   auto stream_factory_get_schema =
       (stream_factory_get_schema_t)&ArrowIPCStreamBufferReader::GetSchema;
-  auto res = make_uniq<ArrowIPCScanFunctionData>(stream_factory_produce,
-                                                 stream_factory_ptr);
+  auto result = make_uniq<ArrowIPCScanFunctionData>(stream_factory_produce,
+                                                    stream_factory_ptr);
 
   // Store decoder
-  res->stream_decoder = std::move(stream_decoder);
-
+  result->stream_decoder = std::move(stream_decoder);
+  result->file_buffer = s_file_buffer;
   // TODO Everything below this is identical to the bind in
   // duckdb/src/function/table/arrow.cpp
-  auto &data = *res;
+  auto &data = *result;
   stream_factory_get_schema((ArrowArrayStream *)stream_factory_ptr,
                             data.schema_root.arrow_schema);
   for (idx_t col_idx = 0;
@@ -71,7 +79,7 @@ unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
       throw InvalidInputException("arrow_scan: released schema passed");
     }
     auto arrow_type =
-       ArrowType::GetArrowLogicalType(DBConfig::GetConfig(context), schema);
+        ArrowType::GetArrowLogicalType(DBConfig::GetConfig(context), schema);
 
     if (schema.dictionary) {
       auto dictionary_type = ArrowType::GetArrowLogicalType(
@@ -81,7 +89,7 @@ unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
     } else {
       return_types.emplace_back(arrow_type->GetDuckType());
     }
-    res->arrow_table.AddColumn(col_idx, std::move(arrow_type));
+    result->arrow_table.AddColumn(col_idx, std::move(arrow_type));
     auto format = string(schema.format);
     auto name = string(schema.name);
     if (name.empty()) {
@@ -90,7 +98,7 @@ unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
     names.push_back(name);
   }
   QueryResult::DeduplicateColumns(names);
-  return std::move(res);
+  return std::move(result);
 }
 
 // Same as regular arrow scan, except ArrowToDuckDB call TODO: refactor to allow
