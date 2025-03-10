@@ -1,0 +1,64 @@
+# name: test/sql/arrow_ipc/write_arrow_ipc.test
+# description: Test Arrow IPC copy functionality with multiple threads
+# group: [arrow_ipc]
+
+require arrow
+
+# Enable parallel execution
+statement ok
+SET THREADS=4;
+
+# Create a test table with sufficient rows to trigger parallel execution
+statement ok
+CREATE TABLE test_data AS
+SELECT
+    i AS id,
+    'sample_text_' || i AS text_col,
+    i * 10::BIGINT AS value_col,
+    DATE '2000-01-01' + (i::INTEGER % 365::INTEGER)::INTEGER AS date_col
+FROM range(0, 1000000) tbl(i);
+
+# Ensure the data is large enough to be split across multiple files
+query I
+SELECT COUNT(*) FROM test_data;
+----
+1000000
+
+# Copy table to arrow format with settings to split into multiple files
+statement ok
+COPY test_data TO '__TEST_DIR__/test_data.arrow'
+    (FORMAT 'arrow', PER_THREAD_OUTPUT true, COMPRESSION 'zstd');
+
+
+query I
+SELECT COUNT(*) AS has_files FROM glob('__TEST_DIR__/test_data.arrow/*');
+----
+4
+
+# Verify the data
+statement ok
+CREATE TABLE test_verify (id BIGINT, text_col VARCHAR, value_col BIGINT, date_col DATE);
+
+statement ok
+COPY test_verify FROM '__TEST_DIR__/test_data.arrow/data_0.arrow' (FORMAT 'arrow');
+
+statement ok
+COPY test_verify FROM '__TEST_DIR__/test_data.arrow/data_1.arrow' (FORMAT 'arrow');
+
+statement ok
+COPY test_verify FROM '__TEST_DIR__/test_data.arrow/data_2.arrow' (FORMAT 'arrow');
+
+statement ok
+COPY test_verify FROM '__TEST_DIR__/test_data.arrow/data_3.arrow' (FORMAT 'arrow');
+
+query I
+SELECT COUNT(*) FROM test_verify;
+----
+1000000
+
+# Cleanup
+statement ok
+DROP TABLE test_data;
+
+statement ok
+DROP TABLE test_verify;
