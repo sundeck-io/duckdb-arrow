@@ -7,8 +7,6 @@
 
 namespace duckdb {
 
-const std::string ARROW_MAGIC = "ARROW1";
-
 struct ArrowIPCScanFunctionData : public ArrowScanFunctionData {
 public:
   using ArrowScanFunctionData::ArrowScanFunctionData;

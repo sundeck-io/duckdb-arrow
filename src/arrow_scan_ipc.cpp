@@ -43,11 +43,6 @@ unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
   // Create stream decoder and buffer
   auto buffer = file_buffer->data();
   auto buffer_size = file_buffer->size();
-  if (std::string(reinterpret_cast<char*>(file_buffer->data()), 6) == ARROW_MAGIC) {
-    // ignore magic and footer if it is arrow file format
-    buffer = file_buffer->data() + 8;  // skip 8byte magic at the start
-    buffer_size -= 16;  // skip 8byte magic and 8byte footer
-  }
   // Feed file into decoder
   auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
   auto consume_result = stream_decoder->Consume(buffer, buffer_size);
