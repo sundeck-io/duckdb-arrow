@@ -15,15 +15,12 @@ jobs:
 
     steps:
       - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v6
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
-
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ gcc
 
       - name: Build Arrow extension
         run: make release
