@@ -105,7 +105,7 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
   // Initialize writer with schema
   auto options = arrow::ipc::IpcWriteOptions::Defaults();
   auto writer_result =
-      arrow::ipc::MakeFileWriter(output_stream, global_state->schema, options);
+      arrow::ipc::MakeStreamWriter(output_stream, global_state->schema, options);
   if (!writer_result.ok()) {
     throw IOException("Failed to create Arrow IPC writer: " +
                       writer_result.status().ToString());
