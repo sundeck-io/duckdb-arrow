@@ -30,12 +30,12 @@ protected:
   bool is_eos_;
 
   /// Decoded a record batch
-  arrow::Status OnSchemaDecoded(std::shared_ptr<arrow::Schema> schema);
+  arrow::Status OnSchemaDecoded(std::shared_ptr<arrow::Schema> schema) override;
   /// Decoded a record batch
   arrow::Status
-  OnRecordBatchDecoded(std::shared_ptr<arrow::RecordBatch> record_batch);
+  OnRecordBatchDecoded(std::shared_ptr<arrow::RecordBatch> record_batch) override;
   /// Reached end of stream
-  arrow::Status OnEOS();
+  arrow::Status OnEOS() override;
 
 public:
   /// Constructor
@@ -71,14 +71,7 @@ public:
   ArrowIPCStreamBufferReader(std::shared_ptr<ArrowIPCStreamBuffer> buffer);
 
   /// Destructor
-  ~ArrowIPCStreamBufferReader() override {
-    // Clear batches first
-    if (buffer_) {
-      buffer_->batches().clear();
-      // Let schema cleanup happen through ArrowSchemaWrapper
-      buffer_.reset();
-    }
-  }
+  ~ArrowIPCStreamBufferReader() = default;
 
   /// Get the schema
   std::shared_ptr<arrow::Schema> schema() const override;

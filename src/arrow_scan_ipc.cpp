@@ -24,7 +24,6 @@ TableFunction ArrowIPCTableFunction::GetFunction() {
 unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
     ClientContext &context, TableFunctionBindInput &input,
     vector<LogicalType> &return_types, vector<string> &names) {
-  auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
 
   // Get file path from input
   auto file_path = input.inputs[0].GetValue<string>();
@@ -33,11 +32,20 @@ unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
 
   // Read file into memory
   auto file_size = fs.GetFileSize(*handle);
-  vector<uint8_t> buffer(file_size);
-  handle->Read(buffer.data(), file_size);
+  auto s_file_buffer = make_shared_ptr<vector<uint8_t>>(file_size);
+  auto file_buffer = s_file_buffer.get();
+  auto bytes_read = handle->Read(file_buffer->data(), file_size);
 
+  if (bytes_read != file_size) {
+    throw IOException("Failed to read Arrow IPC file");
+  }
+
+  // Create stream decoder and buffer
+  auto buffer = file_buffer->data();
+  auto buffer_size = file_buffer->size();
   // Feed file into decoder
-  auto consume_result = stream_decoder->Consume(buffer.data(), file_size);
+  auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
+  auto consume_result = stream_decoder->Consume(buffer, buffer_size);
   if (!consume_result.ok()) {
     throw IOException("Invalid Arrow IPC file");
   }
@@ -58,7 +66,7 @@ unique_ptr<FunctionData> ArrowIPCTableFunction::ArrowScanBind(
 
   // Store decoder
   result->stream_decoder = std::move(stream_decoder);
-
+  result->file_buffer = s_file_buffer;
   // TODO Everything below this is identical to the bind in
   // duckdb/src/function/table/arrow.cpp
   auto &data = *result;

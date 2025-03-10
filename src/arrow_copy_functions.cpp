@@ -1,12 +1,11 @@
 #include "arrow_copy_functions.hpp"
-#include "arrow_to_ipc.hpp"
-#include "duckdb/common/types/value.hpp"
-#include "duckdb/main/config.hpp"
-#include "duckdb/common/file_system.hpp"
-#include "duckdb/function/table/arrow.hpp"
 #include "arrow/c/bridge.h"
 #include "arrow/io/file.h"
 #include "arrow/ipc/writer.h"
+#include "arrow_to_ipc.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/function/table/arrow.hpp"
+#include "duckdb/main/config.hpp"
 
 namespace duckdb {
 
@@ -48,6 +47,37 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
       case LogicalTypeId::BIGINT:
         arrow_type = arrow::int64();
         break;
+      case LogicalTypeId::VARCHAR:
+        arrow_type = arrow::utf8();
+        break;
+      case LogicalTypeId::DOUBLE:
+        arrow_type = arrow::float64();
+        break;
+      case LogicalTypeId::BOOLEAN:
+        arrow_type = arrow::boolean();
+        break;
+      case LogicalTypeId::DATE:
+        arrow_type = arrow::date32();
+        break;
+      case LogicalTypeId::TIMESTAMP_SEC:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::SECOND);
+        break;
+      case LogicalTypeId::TIMESTAMP_MS:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::MILLI);
+        break;
+      case LogicalTypeId::TIMESTAMP:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::MICRO);
+        break;
+      case LogicalTypeId::TIMESTAMP_NS:
+        arrow_type = arrow::timestamp(arrow::TimeUnit::NANO);
+        break;
+      case LogicalTypeId::BLOB:
+        arrow_type = arrow::binary();
+        break;
+      case LogicalTypeId::DECIMAL:
+        arrow_type = arrow::decimal(DecimalType::GetWidth(sql_type),
+                                    DecimalType::GetScale(sql_type));
+        break;
       // Add more type conversions as needed
       default:
         throw IOException("Unsupported type for Arrow IPC: " +
@@ -75,7 +105,7 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
   // Initialize writer with schema
   auto options = arrow::ipc::IpcWriteOptions::Defaults();
   auto writer_result =
-      arrow::ipc::MakeFileWriter(output_stream, global_state->schema, options);
+      arrow::ipc::MakeStreamWriter(output_stream, global_state->schema, options);
   if (!writer_result.ok()) {
     throw IOException("Failed to create Arrow IPC writer: " +
                       writer_result.status().ToString());
@@ -86,17 +116,8 @@ ArrowIPCWriteInitializeGlobal(ClientContext &context, FunctionData &bind_data,
 }
 
 vector<unique_ptr<Expression>> ArrowIPCWriteSelect(CopyToSelectInput &input) {
-  vector<unique_ptr<Expression>> result;
-  bool any_change = false;
-
-  for (auto &expr : input.select_list) {
-    const auto &type = expr->return_type;
-    const auto &name = expr->GetAlias();
-
-    // All types supported by Arrow IPC
-    result.push_back(std::move(expr));
-  }
-  // If no changes were made, return empty vector to avoid unnecessary
+  // All types supported by Arrow IPC
+  // As no changes were made, return empty vector to avoid unnecessary
   // projection
   return {};
 }
@@ -147,7 +168,6 @@ void ArrowIPCWriteSink(ExecutionContext &context, FunctionData &bind_data,
 void ArrowIPCWriteCombine(ExecutionContext &context, FunctionData &bind_data,
                           GlobalFunctionData &gstate,
                           LocalFunctionData &lstate) {
-  auto &arrow_bind = bind_data.Cast<ArrowIPCWriteBindData>();
   auto &global_state = gstate.Cast<ArrowIPCWriteGlobalState>();
   auto &local_state = lstate.Cast<ArrowIPCWriteLocalState>();
 
@@ -226,19 +246,26 @@ unique_ptr<FunctionData> ArrowIPCCopyDeserialize(Deserializer &deserializer,
 
 unique_ptr<FunctionData>
 ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
-                     vector<string> &names,
+                     vector<string> &expected_names,
                      vector<LogicalType> &expected_types) {
   auto &fs = FileSystem::GetFileSystem(context);
   auto handle = fs.OpenFile(info.file_path, FileFlags::FILE_FLAGS_READ);
   auto file_size = fs.GetFileSize(*handle);
 
   // Read file into memory
-  vector<uint8_t> file_buffer(file_size);
-  handle->Read(file_buffer.data(), file_size);
+  auto s_file_buffer = make_shared_ptr<vector<uint8_t>>(file_size);
+  auto file_buffer = s_file_buffer.get();
+  auto bytes_read = handle->Read(file_buffer->data(), file_size);
 
+  if (bytes_read != file_size) {
+    throw IOException("Failed to read Arrow IPC file");
+  }
+
+  auto buffer = file_buffer->data();
+  auto buffer_size = file_buffer->size();
   // Create stream decoder and buffer
   auto stream_decoder = make_uniq<BufferingArrowIPCStreamDecoder>();
-  auto consume_result = stream_decoder->Consume(file_buffer.data(), file_size);
+  auto consume_result = stream_decoder->Consume(buffer, buffer_size);
   if (!consume_result.ok()) {
     throw IOException("Invalid Arrow IPC file");
   }
@@ -251,16 +278,17 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
   auto stream_factory_ptr = (uintptr_t)&stream_decoder->buffer();
   auto stream_factory_produce =
       (stream_factory_produce_t)&ArrowIPCStreamBufferReader::CreateStream;
-  auto stream_factory_get_schema =
-      (stream_factory_get_schema_t)&ArrowIPCStreamBufferReader::GetSchema;
 
   // Store decoder and get buffer pointer
   auto result = make_uniq<ArrowIPCScanFunctionData>(stream_factory_produce, stream_factory_ptr);
   result->stream_decoder = std::move(stream_decoder);
+  result->file_buffer = s_file_buffer;
 
   auto &data = *result;
-  stream_factory_get_schema((ArrowArrayStream *)stream_factory_ptr,
-                            data.schema_root.arrow_schema);
+  ArrowIPCStreamBufferReader::GetSchema((uintptr_t)&result->stream_decoder->buffer(),
+                            data.schema_root);
+  vector<string> names;
+  vector<LogicalType> types;
   for (idx_t col_idx = 0;
        col_idx < (idx_t)data.schema_root.arrow_schema.n_children; col_idx++) {
     auto &schema = *data.schema_root.arrow_schema.children[col_idx];
@@ -273,10 +301,10 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
     if (schema.dictionary) {
       auto dictionary_type = ArrowType::GetArrowLogicalType(
           DBConfig::GetConfig(context), *schema.dictionary);
-      expected_types.emplace_back(dictionary_type->GetDuckType());
+      types.emplace_back(dictionary_type->GetDuckType());
       arrow_type->SetDictionary(std::move(dictionary_type));
     } else {
-      expected_types.emplace_back(arrow_type->GetDuckType());
+      types.emplace_back(arrow_type->GetDuckType());
     }
     result->arrow_table.AddColumn(col_idx, std::move(arrow_type));
     auto format = string(schema.format);
@@ -287,6 +315,18 @@ ArrowIPCCopyFromBind(ClientContext &context, CopyInfo &info,
     names.push_back(name);
   }
   QueryResult::DeduplicateColumns(names);
+  if (expected_types.empty()) {
+    expected_names = names;
+    expected_types = types;
+  } else {
+    if (expected_names != names) {
+      throw IOException("Arrow IPC schema mismatch, column names mismatch");
+    }
+    if (expected_types != types) {
+      // TODO add more detailed error message
+      throw IOException("Arrow IPC schema mismatch, column types mismatch");
+    }
+  }
   return std::move(result);
 }
 
